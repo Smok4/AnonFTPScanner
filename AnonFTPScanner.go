@@ -1,25 +1,29 @@
 //Made By Namz
-// For educational prupose only
+// For educational purpose only
 
 package main
 
 import (
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"os"
-	"time"
-
-	"github.com/jlaffaye/ftp"
+	"sync"
 )
 
+var mutex sync.Mutex // Mutex to protect IP scanning
+
 func main() {
-	ipRanges := []string{
-		"185.0.0.0/8",            //put the range you want scan
-		"188.0.0.0/8",
-		"195.0.0.0/8",
-		"212.0.0.0/8",
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: ./monscript <iprange>")
+		return
+	}
+
+	ipRange := os.Args[1]
+
+	_, network, err := net.ParseCIDR(ipRange)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	resultFile, err := os.Create("results.txt")
@@ -28,43 +32,70 @@ func main() {
 	}
 	defer resultFile.Close()
 
-	for _, ipRange := range ipRanges {
-		_, network, err := net.ParseCIDR(ipRange)
-		if err != nil {
-			log.Fatal(err)
-		}
+	wg := sync.WaitGroup{}
 
-		for ip := network.IP; network.Contains(ip); incIP(ip) {
-			go func(ip net.IP) {
-				if connectAnonymousFTP(ip, resultFile) {
-					result := fmt.Sprintf("Connected to: %s\n", ip)
-					fmt.Print(result) // Print to console
+	for ip := network.IP; network.Contains(ip); incIP(ip) {
+		wg.Add(1)
+		go func(ip net.IP) {
+			defer wg.Done()
+
+			if connectAnonymousFTP(ip) {
+				result := fmt.Sprintf("Connected to: %s\n", ip)
+				fmt.Print(result) // Print to console
+
+				mutex.Lock()
+				if _, err := resultFile.WriteString(result); err != nil {
+					log.Printf("Error writing to file: %s", err)
 				}
-			}(ip)
-		}
+				mutex.Unlock()
+			}
+		}(ip)
 	}
 
-	// Wait for the connections to finish
-	time.Sleep(5 * time.Second)
+	wg.Wait()
 }
 
-func connectAnonymousFTP(ip net.IP, resultFile *os.File) bool {
-	// Simulating a connection attempt
+func connectAnonymousFTP(ip net.IP) bool {
 	fmt.Printf("Attempting FTP connection to: %s\n", ip)
 
-	// Simulating network latency
-	time.Sleep(time.Duration(randInt(500, 2000)) * time.Millisecond)
-
-	// Simulating a successful FTP connection for demonstration purposes
-	success := randInt(0, 2) == 0
-	if success {
-		fmt.Printf("Successfully connected to FTP at: %s\n", ip)
-		resultFile.WriteString(fmt.Sprintf("Connected to FTP at: %s\n", ip)) // Write to file
-	} else {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:21", ip), 5)
+	if err != nil {
 		fmt.Printf("Failed to connect to FTP at: %s\n", ip)
+		return false
+	}
+	defer conn.Close()
+
+	// Read the server response
+	response := make([]byte, 1024)
+	_, err = conn.Read(response)
+	if err != nil {
+		fmt.Printf("Failed to read server response: %s\n", err)
+		return false
 	}
 
-	return success
+	// Send the USER command
+	userCmd := fmt.Sprintf("USER %s\r\n", "anonymous")
+	_, err = conn.Write([]byte(userCmd))
+	if err != nil {
+		fmt.Printf("Failed to send USER command: %s\n", err)
+		return false
+	}
+
+	// Read the response to the USER command
+	_, err = conn.Read(response)
+	if err != nil {
+		fmt.Printf("Failed to read server response: %s\n", err)
+		return false
+	}
+
+	// Check if the response code indicates success (code 230)
+	if string(response[0:3]) != "230" {
+		fmt.Printf("Failed to log in anonymously to FTP at: %s\n", ip)
+		return false
+	}
+
+	fmt.Printf("Successfully connected to FTP at: %s\n", ip)
+	return true
 }
 
 func incIP(ip net.IP) {
@@ -74,9 +105,4 @@ func incIP(ip net.IP) {
 			break
 		}
 	}
-}
-
-func randInt(min, max int) int {
-	rand.Seed(time.Now().UnixNano())
-	return min + rand.Intn(max-min)
 }
