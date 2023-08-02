@@ -1,7 +1,10 @@
-//Made By Namz
+// Made By Namz
 // For educational purpose only
 // Update 02/08/2023
+// apt-get install golang
+// go build AnonFTPScanner
 // Usage ./AnonFTPScanner youriplist.txt
+// remmoved github.com/jlaffaye/ftp
 
 package main
 
